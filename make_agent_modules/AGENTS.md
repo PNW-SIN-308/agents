@@ -1,17 +1,22 @@
-Only execute PLAN mode until user has confirmed they are ready to execute the PLAN, offer suggestions for improvement in the PLAN that could save tokens, or improve the AGENT.md file.
+# SESSION START
+1. Parse VARS.md (KEY=VALUE) from this directory.
+2. If any value == `<SET_ME>`: STOP — tell user "Edit VARS.md and set all paths, then restart."
+3. Expand `~` in all paths. Store as: AGENTS_VERSIONING_DIR, AGENTS_DEPLOY_DIR, AGENTS_MODULES_DIR.
+4. If AGENTS_VERSIONING_DIR or AGENTS_DEPLOY_DIR do not exist: execute INIT.md.
 
-The AGENT.md file should have a defined parameter name
+# MODULE CREATION
+- Only execute PLAN mode until user confirms ready to execute.
+- Offer token-saving suggestions or improvements to the AGENT file in PLAN mode.
+- parameter_name: defined per prompt; used as module identity.
+- Output file: `{parameter_name}_AGENTS.md` — optimized for LLM, not human reading.
+- details-location: separate file/dir with human-readable detail; reference it with minimal tokens in the AGENT file.
+- Store all output files in: `{AGENTS_VERSIONING_DIR}/{parameter_name}/v{N}/` (v0 if first version).
+- Maintain `{AGENTS_VERSIONING_DIR}/{parameter_name}/CHANGELOG.md` — append on every create/update: datetime, version, brief description.
 
-The AGENT.md should created using the filename pattern : {parameter_name}_AGENT.md
+# DEPLOYMENT
+- Use `deploy.sh` (in AGENTS_MODULES_DIR) to deploy, activate, or deactivate modules.
+- Deployed files use naming: `activated_{param}_AGENTS.md` or `deactivated_{param}_AGENTS.md`.
 
-The details-location means: a file or a directory that contains all the associated information that is not necessary in the AGENT.md file, but could be useful for a human or for further instructions if requested by user.
-
-I will refer to the {parameter_name}_AGENT.md as AGENT file or AGENT.md file.
-
-The goal is to create an AGENTS.md file that is optimize for tokens and LLM to read, not humans, but have separate files that humans can read via other means.
-
-The AGENT.md file should reference a details-location with minimal token usage
-
-No extra nonsense -- as minimal as possible but achieving the singular goal
-
-ALL FILES WHEN DONE should be stored in /mnt/c/Users/jmcli/vault_sync/sync/agent_modules/{parameter_name}/v#  where v#=version number , v0 if its the first time the directory is created
+# PROMPTS
+- User may drop a prompt file in `{AGENTS_MODULES_DIR}/prompts/` and say "execute it", or type a prompt directly.
+- Execute the prompt following the rules above.
