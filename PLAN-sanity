@@ -1,0 +1,472 @@
+# Plan: ~/llm — Modular LLM Workspace Migration
+
+## Problem
+
+Everything lives in `~/copilot` as a monolithic, non-shareable, user-specific tree. Agent definitions, personal config, secrets references, runtime output, and dev experiments are all mixed together with hardcoded values throughout. It can't be shared with a team, onboarded to, or maintained modularly.
+
+## Approach
+
+Build a fresh **4-directory structure** under `~/llm/` — copying and refactoring content from `~/copilot/` (which remains untouched). Extract hardcoded values into environment files. Make the core workspace git-shareable.
+
+---
+
+## Target Architecture
+
+```
+~/llm/
+├── workspace/       ← git repo, SHARED with team
+├── env/             ← git repo, PERSONAL config (.secrets gitignored)
+├── sandbox/         ← personal dev playground (git TBD by user)
+└── output/          ← runtime artifacts (not a git repo)
+```
+
+### workspace/ (git repo — shared)
+
+```
+~/llm/workspace/
+├── .git/
+├── .gitignore
+├── AGENTS.md                    ← Root bootstrap: module discovery, env loading, token budget rules
+├── CHANGELOG.md                 ← System-level changelog
+├── agents/
+│   ├── ado/
+│   │   └── AGENTS.md            ← ADO CRUD, governance, pre-flight delegation, field refs, WIQL
+│   ├── vaults/
+│   │   └── AGENTS.md            ← Obsidian vault rules (GeoBrain, Dev), editing, structure
+│   ├── wikis/
+│   │   └── AGENTS.md            ← Wiki publishing, GitLab CI, format rules
+│   ├── secrets/
+│   │   └── AGENTS.md            ← KSM integration, .secrets handling, PAT management, NEVER-print rules
+│   ├── session/
+│   │   └── AGENTS.md            ← Session start checks, daily log format, handoff, work tracking, changelog
+│   ├── project_manager/
+│   │   └── AGENTS.md            ← Project intake, ongoing lifecycle management
+│   ├── quality_assurance/
+│   │   └── AGENTS.md            ← Code review, PR checklist, testing standards
+│   ├── auditor/
+│   │   └── AGENTS.md            ← ADO hygiene, config drift, stale file detection, permission audits
+│   ├── git/
+│   │   └── AGENTS.md            ← Git workflows, branching, commit conventions, PR flow
+│   ├── llm_module_upgrade/
+│   │   └── AGENTS.md            ← Meta: how to modify ~/llm itself, backlink checks, add-agent checklist, docs sync, git commits
+│   ├── backlog/
+│   │   └── AGENTS.md            ← Quick-capture: "add to backlog" / "I have an idea" → append to output/backlog/
+│   └── personas/
+│       ├── AGENTS.md             ← How personas work, activation/deactivation
+│       ├── devils-advocate/
+│       │   └── AGENTS.md
+│       └── caveman/
+│           └── AGENTS.md
+├── hooks/
+│   ├── feedback_loop.md          ← STOP → ASK → RECORD → APPLY on undefined scenarios
+│   ├── pre_flight.md             ← Pre-mutation checklist before ADO/git writes
+│   └── session_start.md          ← Startup: stale checks, env loading, module discovery
+├── scripts/                      ← Python scripts (sprint-sync, team-index-sync, project-status)
+├── bin/                          ← User-facing CLI tools (added to PATH via .bashrc)
+├── plugin_lib/                   ← Shared plugins (released module system, core_prompts)
+├── templates/
+│   ├── env.example               ← All expected env vars with placeholders
+│   ├── secrets.example           ← All expected secrets with placeholders (no real values)
+│   ├── profile.example.md        ← Starter user profile
+│   └── agent.template.md         ← Skeleton for creating a new agent
+├── docs/                         ← Human-readable mirrors of LLM files
+│   ├── agents-ado.md             ← Verbose explanation of agents/ado/AGENTS.md
+│   ├── agents-session.md
+│   ├── hooks-feedback-loop.md
+│   └── ...                       ← One doc per agent/hook
+└── info/                         ← Best practices & guides (meta-knowledge)
+    ├── onboarding-guide.md
+    ├── how-to-use-hooks.md
+    ├── hooks-limitations.md
+    ├── scripts-vs-llm-best-practices.md
+    ├── token-optimization-tips.md
+    └── vault-structure-guide.md
+```
+
+### env/ (git repo — personal, .secrets gitignored)
+
+```
+~/llm/env/
+├── .git/
+├── .gitignore                    ← Must ignore: .secrets, keeper.ini
+├── AGENTS.md                     ← Load order: .env → profile.md → NEVER read .secrets into output
+├── .env                          ← Non-sensitive config (ADO org, project, paths, iteration, area path, gitlab host, repos_root)
+├── .secrets                      ← GITIGNORED — Keeper UIDs, PAT retrieval commands, sensitive refs
+├── profile.md                    ← Identity (name, team, timezone), machine paths, ADO preferences, repo list
+└── keeper.ini                    ← GITIGNORED — KSM config file
+```
+
+#### What goes where (extraction from current hardcoded values):
+
+**.env** (tracked, shareable pattern — values are user-specific):
+```bash
+# ADO
+ADO_ORG=https://dev.azure.com/{insert-ado-org-name}
+ADO_PROJECT={insert-ado-project}
+ADO_TEAM_ID={insert-ado-team-id}
+ADO_AREA_PATH={insert-ado-area-path}
+ADO_ITERATION={insert-ado-iteration}
+ADO_API_VERSION=7.1
+
+# GitLab
+GITLAB_HOST={insert-gitlab-host}
+
+# Paths
+REPOS_ROOT={insert-repos-root}
+GEOBRAIN_VAULT={insert-geobrain-vault-path}
+DEV_VAULT={insert-dev-vault-path}
+LLM_OUTPUT=~/llm/output
+
+# KSM
+KSM_BINARY=~/.local/bin/ksm
+KSM_INI=~/.keeper/keeper.ini
+```
+
+**.secrets** (GITIGNORED — never printed, never loaded into LLM context):
+```bash
+# Keeper UIDs for secret retrieval (not the secrets themselves)
+ADO_PAT_KEEPER_UID={insert-keeper-uid}
+ADO_PAT_KEEPER_TITLE={insert-ado-pat-keeper-title}
+GITLAB_PAT_KEEPER_TITLE={insert-gitlab-pat-keeper-title}
+```
+
+**profile.md** (tracked — identity and preferences):
+```yaml
+name: {insert-name}
+initials: {insert-initials}
+team: {insert-team-tag}
+branch: {insert-location}
+timezone: Asia/{insert-location}
+utc_offset: UTC+8
+
+repos:
+  - key: {insert-repo-1-key}
+    path: {insert-repos-root}/{insert-repo-1-key}
+  - key: {insert-repo-2-key}
+    path: {insert-repos-root}/{insert-repo-2-key}
+
+preferences:
+  verify_parent_link_on_create: true
+```
+
+### sandbox/ (personal, git TBD by user)
+
+```
+~/llm/sandbox/
+├── AGENTS.md                     ← Sandbox rules: clean coding assistant, conventional commits
+├── projects/
+│   └── (user creates project dirs here)
+├── building_plugins/
+│   └── (user creates plugin dirs here)
+└── archive/
+    └── (old experiments)
+```
+
+Content migrated from `~/copilot/personal/`:
+- `agents_package_mgr/` → `sandbox/projects/agents_package_mgr/`
+- `modules_v2/` → `sandbox/projects/modules_v2/`
+- `modules/old/` → `sandbox/archive/modules_old/`
+- `modules_v2_test/` → `sandbox/projects/modules_v2_test/`
+
+### output/ (runtime, not git-tracked)
+
+```
+~/llm/output/
+├── sprint-board.md               ← Single file, overwritten by sync
+├── daily-logs/                   ← YYYY-MM-DD.md
+├── ado-reports/                  ← Timestamped snapshots
+├── ado-backlog.md                ← Persistent backlog tracker
+├── changelog/                    ← Work change logs
+├── handoffs/                     ← Session handoff files
+└── backlog/                      ← Quick-capture ideas, tasks, future work
+    └── backlog.md                ← Append-only log of captured items
+```
+
+---
+
+## Content Migration Map
+
+### Source → Destination
+
+| Source (~/copilot/) | Destination (~/llm/) | Notes |
+|---|---|---|
+| `AGENTS.md` (base profile) | `workspace/AGENTS.md` (bootstrap) + `env/profile.md` (identity) | Split: bootstrap is system, identity is user |
+| `ksm.md` | `workspace/agents/secrets/AGENTS.md` | Expanded into full secrets agent |
+| `devils_advocate/AGENTS.md` | `workspace/agents/personas/devils-advocate/AGENTS.md` | Direct copy |
+| `{insert-team-tag}/AGENTS.md` §Identity | `env/.env` + `env/profile.md` | Extract hardcoded ADO/identity values |
+| `{insert-team-tag}/AGENTS.md` §Session Start | `workspace/hooks/session_start.md` | Becomes a hook |
+| `{insert-team-tag}/AGENTS.md` §Pre-Flight | `workspace/hooks/pre_flight.md` | Becomes a hook |
+| `{insert-team-tag}/AGENTS.md` §Feedback Loop | `workspace/hooks/feedback_loop.md` | Becomes a hook |
+| `{insert-team-tag}/AGENTS.md` §/ado_add | `workspace/agents/ado/AGENTS.md` | All ADO ops consolidated |
+| `{insert-team-tag}/AGENTS.md` §/ado_hygiene | `workspace/agents/auditor/AGENTS.md` | Hygiene checks move to auditor |
+| `{insert-team-tag}/AGENTS.md` §/sprint | `workspace/agents/ado/AGENTS.md` + `workspace/bin/update-sprint-board` | Command in ADO agent, script in bin |
+| `{insert-team-tag}/AGENTS.md` §/team-index-sync | `workspace/agents/ado/AGENTS.md` + `workspace/bin/team-index-sync` | Same pattern |
+| `{insert-team-tag}/AGENTS.md` §/project-status | `workspace/agents/project_manager/AGENTS.md` + `workspace/bin/project-status` | Project lifecycle |
+| `{insert-team-tag}/AGENTS.md` §GeoBrain | `workspace/agents/vaults/AGENTS.md` | Vault context |
+| `{insert-team-tag}/AGENTS.md` §Dev Vault | `workspace/agents/vaults/AGENTS.md` | Vault context |
+| `{insert-team-tag}/AGENTS.md` §Sprint Board | `workspace/agents/session/AGENTS.md` | Session work tracking |
+| `{insert-team-tag}/geobrain-profile.md` | `env/profile.md` + `env/.env` + `env/.secrets` | Split across 3 files |
+| `{insert-team-tag}/keeper.ini` | `env/keeper.ini` (gitignored) | Direct copy |
+| `{insert-team-tag}/sprint-board.md` | `output/sprint-board.md` | Runtime artifact |
+| `{insert-team-tag}/daily-logs/` | `output/daily-logs/` | Runtime artifact |
+| `{insert-team-tag}/changelog/` | `output/changelog/` | Runtime artifact |
+| `{insert-team-tag}/ado-reports/` | `output/ado-reports/` | Runtime artifact |
+| `{insert-team-tag}/ado-backlog.md` | `output/ado-backlog.md` | Runtime artifact |
+| `{insert-team-tag}/scripts/*.py` | `workspace/scripts/*.py` | Update paths to use env vars |
+| `{insert-team-tag}/copilot-cli-quickstart` | `workspace/info/copilot-cli-quickstart.md` | Becomes a guide |
+| `personal/AGENTS.md` | `sandbox/AGENTS.md` | Sandbox base profile |
+| `personal/agents_package_mgr/` | `sandbox/projects/agents_package_mgr/` | Dev project |
+| `personal/modules_v2/` | `sandbox/projects/modules_v2/` | Live install |
+| `personal/modules_v2/repo/` | `workspace/plugin_lib/modules_v2/` | Released shared system |
+| `personal/modules_v2_test/` | `sandbox/projects/modules_v2_test/` | Test instance |
+| `personal/modules/old/` | `sandbox/archive/modules_old/` | Historical |
+| `~/bin/update_sprint_board` | `workspace/bin/update-sprint-board` | Refactored to read env |
+
+### Scripts Path Updates
+
+All scripts currently hardcode `~/copilot/{insert-team-tag}/` paths. They need to:
+1. Source `~/llm/env/.env` for config values
+2. Write output to `$LLM_OUTPUT/` instead of `~/copilot/{insert-team-tag}/`
+3. Read profile from `~/llm/env/profile.md` instead of `~/copilot/{insert-team-tag}/geobrain-profile.md`
+
+| Script | Hardcoded Paths to Update |
+|---|---|
+| `sprint-sync.py` | `PROFILE_PATH`, `OUTPUT_PATH` |
+| `team-index-sync.py` | `PROFILE_PATH`, `GEOBRAIN_VAULT` output path |
+| `project-status.py` | `PROFILE_PATH`, vault paths |
+| `~/bin/update_sprint_board` | `BOARD` path, script invocation path |
+
+---
+
+## Agent Content Outline
+
+### workspace/AGENTS.md (Root Bootstrap)
+- How the LLM discovers and loads modules
+- Load order: `env/.env` → `env/profile.md` → discover `agents/` → load `hooks/`
+- Token budget rules: agents are concise, defer to `docs/` for details
+- NEVER read `env/.secrets` into context — only pass to scripts
+
+### agents/ado/AGENTS.md
+- `/ado_add` command (full field reference, bulk creation rules)
+- `/sprint` command (delegates to bin/update-sprint-board, reads output/sprint-board.md)
+- `/team-index-sync` command (delegates to bin/team-index-sync)
+- Work tracking rules (tags, iteration, estimates)
+- References `env/.env` for: ADO_ORG, ADO_PROJECT, ADO_AREA_PATH, ADO_ITERATION
+
+### agents/session/AGENTS.md
+- Daily log format and rules
+- Sprint board as read-only cache
+- CHANGELOG entry format
+- Handoff file creation
+- References `hooks/session_start.md` for startup
+
+### agents/auditor/AGENTS.md
+- ADO hygiene checks (from current /ado_hygiene)
+- Config drift detection (env/.env vs actual)
+- Stale file detection (sprint board, team index, project files)
+- Output format: violations table → proposed fixes → confirm
+
+### agents/secrets/AGENTS.md
+- KSM binary and config locations (from env/.env)
+- How to retrieve a secret: `$KSM_BINARY --ini-file $KSM_INI secret notation {UID}/field/password`
+- Security rules: NEVER print secret values, NEVER include in LLM context
+- Secret rotation procedures
+
+### agents/git/AGENTS.md
+- Branching strategy and conventions
+- Commit message format (conventional commits)
+- PR workflow and checklist
+- How to handle the ~/llm/workspace repo itself
+
+### agents/llm_module_upgrade/AGENTS.md
+- Checklist for adding a new agent: create AGENTS.md, update root AGENTS.md discovery, add docs/ mirror, update info/onboarding
+- Checklist for modifying an agent: check backlinks in other agents, update docs/ mirror, CHANGELOG entry
+- Git commit conventions for workspace changes
+- Template references for new agents
+
+### agents/project_manager/AGENTS.md
+- New project intake workflow
+- `/project-status` command (delegates to bin/project-status)
+- Project lifecycle tracking
+- Project file structure in vaults
+
+### agents/quality_assurance/AGENTS.md
+- Code review standards
+- PR checklist
+- Testing requirements
+- References GeoBrain standards
+
+### agents/vaults/AGENTS.md
+- GeoBrain vault structure and rules
+- Dev vault structure and rules
+- Editing rules, tagging taxonomy
+- References vault paths from env/.env
+
+### agents/wikis/AGENTS.md
+- Wiki publishing workflow
+- GitLab CI pipeline rules
+- Format and structure standards
+
+### agents/personas/AGENTS.md
+- How to activate/deactivate a persona
+- Persona isolation rules
+
+### agents/backlog/AGENTS.md
+- Triggers: "add to backlog", "I have an idea", "track this for later", or similar
+- Append format: timestamp, category (idea/bug/feature/task), one-line summary, optional details
+- Output file: `~/llm/output/backlog/backlog.md` (append-only)
+- Categories: `idea`, `bug`, `feature`, `task`, `improvement`
+- Rules: never overwrite, always append, include source context if available
+- Optional: tag with project name, priority (low/med/high), related agent
+
+### hooks/session_start.md
+- Read env/.env and env/profile.md
+- Check sprint-board.md staleness (>24h)
+- Check team index staleness (>7d)
+- Scan project files for stale `last_verified`
+- Load active agents
+
+### hooks/pre_flight.md
+- 8-point checklist before any ADO mutation
+- Parent link, required fields, tags, iteration, assignee
+- Delegates to secrets agent for PAT retrieval
+
+### hooks/feedback_loop.md
+- STOP → ASK → RECORD → APPLY
+- Route to team standards vs user preferences
+- Where to record: `workspace/` for team rules, `env/profile.md` for user prefs
+
+---
+
+## env/AGENTS.md — Security & Load Order
+
+```markdown
+# LLM Environment — Load Order & Security
+
+## Load Order
+1. Read `.env` — non-sensitive configuration (paths, org names, iterations)
+2. Read `profile.md` — identity, preferences, repo list
+3. NEVER read `.secrets` into LLM context or output
+
+## .secrets Handling
+- Scripts may source .secrets to retrieve Keeper UIDs
+- The LLM must NEVER print, echo, or include .secrets content in responses
+- If a secret is needed, instruct the user to run a script or use `$KSM_BINARY`
+
+## File Purposes
+| File | Contains | Git-tracked | LLM reads |
+|------|----------|-------------|-----------|
+| .env | Paths, org names, API versions | Yes | Yes |
+| .secrets | Keeper UIDs, PAT retrieval info | NO | NO |
+| profile.md | Identity, preferences, repos | Yes | Yes |
+| keeper.ini | KSM local config | NO | NO |
+```
+
+---
+
+## Implementation Phases
+
+### Phase 1: Scaffold directories and git repos
+1. Create `~/llm/` parent directory
+2. Create `~/llm/workspace/` with `git init`
+3. Create `~/llm/env/` with `git init` and `.gitignore` (.secrets, keeper.ini)
+4. Create `~/llm/sandbox/` with basic structure and AGENTS.md
+5. Create `~/llm/output/` with subdirectories
+6. Create all agent directories under workspace/agents/
+7. Create hooks/, scripts/, bin/, plugin_lib/, templates/, docs/, info/
+
+### Phase 2: Write env/ files
+1. Create `env/AGENTS.md` (load order and security rules)
+2. Create `env/.env` (extract from geobrain-profile.md and {insert-team-tag}/AGENTS.md)
+3. Create `env/.secrets` (extract Keeper UIDs)
+4. Create `env/profile.md` (extract identity and preferences)
+5. Copy `keeper.ini` to `env/`
+6. Create `env/.gitignore`
+
+### Phase 3: Write workspace/AGENTS.md (root bootstrap)
+1. Module discovery logic
+2. Env loading instructions
+3. Token budget rules
+
+### Phase 4: Write agent AGENTS.md files
+1. `agents/ado/AGENTS.md` — extract from {insert-team-tag} §ADO sections
+2. `agents/session/AGENTS.md` — extract from {insert-team-tag} §Session/Sprint Board
+3. `agents/auditor/AGENTS.md` — extract from {insert-team-tag} §/ado_hygiene + expand
+4. `agents/secrets/AGENTS.md` — from ksm.md + geobrain-profile secrets
+5. `agents/git/AGENTS.md` — new, from PR workflow standards
+6. `agents/llm_module_upgrade/AGENTS.md` — new, meta-agent
+7. `agents/project_manager/AGENTS.md` — from {insert-team-tag} §/project-status + expand
+8. `agents/quality_assurance/AGENTS.md` — from GeoBrain review standards
+9. `agents/vaults/AGENTS.md` — from {insert-team-tag} §GeoBrain/Dev Vault
+10. `agents/wikis/AGENTS.md` — from {insert-team-tag} §wiki references
+11. `agents/backlog/AGENTS.md` — new, quick-capture to output/backlog/
+12. `agents/personas/AGENTS.md` — persona framework
+13. `agents/personas/devils-advocate/AGENTS.md` — copy from current
+14. `agents/personas/caveman/AGENTS.md` — new placeholder
+
+### Phase 5: Write hooks
+1. `hooks/session_start.md`
+2. `hooks/pre_flight.md`
+3. `hooks/feedback_loop.md`
+
+### Phase 6: Migrate and update scripts
+1. Copy `scripts/*.py` to `workspace/scripts/`
+2. Update all hardcoded paths to read from `~/llm/env/.env`
+3. Copy/refactor `~/bin/update_sprint_board` → `workspace/bin/update-sprint-board`
+4. Create wrapper scripts in `bin/` for team-index-sync, project-status
+5. Test scripts still work with new paths
+
+### Phase 7: Migrate runtime artifacts to output/
+1. Copy `sprint-board.md` → `output/`
+2. Copy `daily-logs/` → `output/`
+3. Copy `changelog/` → `output/`
+4. Copy `ado-reports/` → `output/`
+5. Copy `ado-backlog.md` → `output/`
+6. Create `output/backlog/backlog.md` with header template
+
+### Phase 8: Migrate sandbox content
+1. Copy `personal/agents_package_mgr/` → `sandbox/projects/agents_package_mgr/`
+2. Copy `personal/modules_v2/` → `sandbox/projects/modules_v2/`
+3. Copy `personal/modules_v2_test/` → `sandbox/projects/modules_v2_test/`
+4. Copy `personal/modules/old/` → `sandbox/archive/modules_old/`
+5. Copy released module system → `workspace/plugin_lib/modules_v2/`
+
+### Phase 9: Write templates
+1. `templates/env.example`
+2. `templates/secrets.example`
+3. `templates/profile.example.md`
+4. `templates/agent.template.md`
+
+### Phase 10: Write docs/ and info/
+1. Create human-readable mirrors for each agent in docs/
+2. Create info/ guides (onboarding, hooks usage, scripts-vs-llm, token tips)
+
+### Phase 11: Finalize
+1. Create workspace/.gitignore
+2. Create workspace/CHANGELOG.md
+3. Initial git commits for workspace/ and env/
+4. Verify nothing references `~/copilot/` in the new tree
+5. Update `~/.bashrc` to add `~/llm/workspace/bin` to PATH (suggest, don't auto-apply)
+
+---
+
+## Decisions Log
+
+| Decision | Choice | Rationale |
+|---|---|---|
+| Parent structure | `~/llm/` with 4 subdirs | Keeps all LLM concerns together, avoids `~` clutter |
+| Naming | workspace, env, sandbox, output | workspace=shared system, env=user config, sandbox=experiments, output=runtime |
+| {insert-team-tag} identity | Dissolved into agents + env | "{insert-team-tag}" was conflating identity, ADO, vaults, and sessions |
+| Feedback loop | Hook, not agent | It's a behavioral trigger, not a standalone capability |
+| personal/ projects | → sandbox/ | Personal dev work belongs in the playground |
+| Module system release | → plugin_lib/ | Released/shared code belongs in the workspace |
+| Output location | ~/llm/output/ (not in workspace or env) | Clean separation: system, config, experiments, artifacts |
+| Sandbox git | TBD by user | Not our call to over-architect |
+| Scripts | Read env vars, not hardcoded paths | Enables team sharing |
+
+## Notes
+
+- `~/copilot/` is NOT touched — this is a copy-and-refactor operation
+- All AGENTS.md files should be concise (token-efficient) — verbose explanations go in docs/
+- The `llm_module_upgrade` agent is critical — it's the self-referential "how to change this system" guide
+- `env/.secrets` is NEVER read by the LLM — scripts can source it, humans can read it, but the LLM must not include it in context or output
